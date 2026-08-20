@@ -28,22 +28,24 @@ const (
 )
 
 type EgressRequest struct {
-	ID           string        `json:"id"`
-	AgentID      string        `json:"agent_id"`
-	UserID       string        `json:"user_id"`
-	OrgID        string        `json:"org_id"`
-	Method       string        `json:"method"`
-	Host         string        `json:"host"`
-	Port         int           `json:"port"`
-	Path         string        `json:"path"`
-	Scheme       string        `json:"scheme"`
-	Status       RequestStatus `json:"status"`
-	RuleID       *string       `json:"rule_id,omitempty"`
-	RequestedAt  time.Time     `json:"requested_at"`
-	DecidedAt    *time.Time    `json:"decided_at,omitempty"`
-	DecidedBy    *string       `json:"decided_by,omitempty"`
-	ErrorMessage *string       `json:"error_message,omitempty"`
-	ConsumedAt   *time.Time    `json:"consumed_at,omitempty"`
+	ID               string        `json:"id"`
+	AgentID          string        `json:"agent_id"`
+	UserID           string        `json:"user_id"`
+	OrgID            string        `json:"org_id"`
+	Method           string        `json:"method"`
+	Host             string        `json:"host"`
+	Port             int           `json:"port"`
+	Path             string        `json:"path"`
+	Scheme           string        `json:"scheme"`
+	Status           RequestStatus `json:"status"`
+	RuleID           *string       `json:"rule_id,omitempty"`
+	RequestedAt      time.Time     `json:"requested_at"`
+	DecidedAt        *time.Time    `json:"decided_at,omitempty"`
+	DecidedBy        *string       `json:"decided_by,omitempty"`
+	ErrorMessage     *string       `json:"error_message,omitempty"`
+	ConsumedAt       *time.Time    `json:"consumed_at,omitempty"`
+	UserDisplayName  string        `json:"user_display_name,omitempty"`
+	AgentDisplayName string        `json:"agent_display_name,omitempty"`
 }
 
 type PolicyRule struct {
@@ -65,7 +67,11 @@ type AuditEvent struct {
 	ID              string         `json:"id"`
 	EgressRequestID *string        `json:"egress_request_id,omitempty"`
 	EventType       string         `json:"event_type"`
+	Title           string         `json:"title"`
+	Description     string         `json:"description"`
+	Subject         string         `json:"subject,omitempty"`
 	ActorID         *string        `json:"actor_id,omitempty"`
+	ActorName       string         `json:"actor_name,omitempty"`
 	Metadata        map[string]any `json:"metadata"`
 	CreatedAt       time.Time      `json:"created_at"`
 }

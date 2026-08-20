@@ -229,8 +229,12 @@ export function InboxTab({ onStatus, onAuthRequired, refreshToken }) {
                           </div>
                           <div className="mono muted">{item.path}</div>
                         </td>
-                        <td className="mono">{item.user_id}</td>
-                        <td className="mono">{item.agent_id}</td>
+                        <td>
+                          <div>{item.user_display_name || item.user_id}</div>
+                        </td>
+                        <td>
+                          <div>{item.agent_display_name || item.agent_id}</div>
+                        </td>
                         <td className="mono">{formatTime(item.requested_at)}</td>
                       </tr>
                     ))}
@@ -290,7 +294,7 @@ export function InboxTab({ onStatus, onAuthRequired, refreshToken }) {
                 {selectedRequest.method} {selectedRequest.host}:{selectedRequest.port}
                 {selectedRequest.path}
               </span>{' '}
-              (agent <span className="mono">{selectedRequest.agent_id}</span>)?
+              (agent <span className="mono">{selectedRequest.agent_display_name || selectedRequest.agent_id}</span>)?
             </p>
             {selectedRequest.method === 'CONNECT' ? (
               <div className="notice warn">CONNECT approval allows an HTTPS tunnel to this host.</div>
@@ -326,12 +330,25 @@ export function InboxTab({ onStatus, onAuthRequired, refreshToken }) {
         {selectedRequest ? (
           <>
             <p>
-              Create org-scoped allow rule for{' '}
+              Approve this request and create an org allow for{' '}
               <span className="mono">
-                {selectedRequest.method} {selectedRequest.host}:{selectedRequest.port}
-                {selectedRequest.path}
-              </span>{' '}
-              and approve this request?
+                {selectedRequest.host}:{selectedRequest.port}
+              </span>
+              {selectedRequest.method === 'CONNECT' ? (
+                <>
+                  {' '}
+                  (stored as method <span className="mono">*</span> so later HTTPS tunnels match)
+                </>
+              ) : (
+                <>
+                  {' '}
+                  matching{' '}
+                  <span className="mono">
+                    {selectedRequest.method} {selectedRequest.path || '/'}
+                  </span>
+                </>
+              )}
+              ?
             </p>
             <div className="notice warn">
               Future matching requests from any agent in this org will auto-approve and remain audited.

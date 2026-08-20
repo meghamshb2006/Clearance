@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	auditpkg "github.com/meghamshb2006/clearance/services/policy-gateway/internal/audit"
 	"github.com/meghamshb2006/clearance/services/policy-gateway/internal/config"
 	"github.com/meghamshb2006/clearance/services/policy-gateway/internal/domain"
 	"github.com/meghamshb2006/clearance/services/policy-gateway/internal/policy"
@@ -59,7 +60,11 @@ func (s *EgressService) ListRules(ctx context.Context) ([]domain.PolicyRule, err
 }
 
 func (s *EgressService) ListAuditEvents(ctx context.Context) ([]domain.AuditEvent, error) {
-	return s.store.ListAuditEvents(ctx)
+	events, err := s.store.ListAuditEvents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return auditpkg.EnrichAll(events), nil
 }
 
 func (s *EgressService) RecordOutbound(

@@ -41,14 +41,19 @@ func (p *Postgres) Ping(ctx context.Context) error {
 
 func (p *Postgres) ListRequests(ctx context.Context, in ListRequestsInput) ([]domain.EgressRequest, error) {
 	baseQuery := `
-		SELECT id, agent_id, user_id, org_id, method, host, port, path, scheme,
-		       status, rule_id, requested_at, decided_at, decided_by, error_message, consumed_at
-		FROM egress_requests
-		WHERE ($1 = '' OR status = $1)
-		  AND ($2 = '' OR host ILIKE '%' || $2 || '%')
-		  AND ($3 = '' OR user_id::text = $3)
-		  AND ($4 = '' OR agent_id::text = $4)
-		ORDER BY requested_at DESC
+		SELECT er.id, er.agent_id, er.user_id, er.org_id, er.method, er.host, er.port, er.path, er.scheme,
+		       er.status, er.rule_id, er.requested_at, er.decided_at, er.decided_by, er.error_message, er.consumed_at,
+		       COALESCE(NULLIF(u.display_name, ''), ''),
+		       COALESCE(NULLIF(ag.name, ''), NULLIF(aa.display_name, ''), '')
+		FROM egress_requests er
+		LEFT JOIN actors u ON u.id = er.user_id
+		LEFT JOIN agents ag ON ag.id = er.agent_id
+		LEFT JOIN actors aa ON aa.id = ag.actor_id
+		WHERE ($1 = '' OR er.status = $1)
+		  AND ($2 = '' OR er.host ILIKE '%' || $2 || '%')
+		  AND ($3 = '' OR er.user_id::text = $3 OR COALESCE(u.display_name, '') ILIKE '%' || $3 || '%')
+		  AND ($4 = '' OR er.agent_id::text = $4 OR COALESCE(ag.name, '') ILIKE '%' || $4 || '%')
+		ORDER BY er.requested_at DESC
 		LIMIT $5
 	`
 	status := ""
@@ -85,9 +90,11 @@ func (p *Postgres) ListRules(ctx context.Context) ([]domain.PolicyRule, error) {
 
 func (p *Postgres) ListAuditEvents(ctx context.Context) ([]domain.AuditEvent, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, egress_request_id, event_type, actor_id, metadata_json, created_at
-		FROM audit_events
-		ORDER BY created_at DESC
+		SELECT ae.id, ae.egress_request_id, ae.event_type, ae.actor_id, ae.metadata_json, ae.created_at,
+		       COALESCE(NULLIF(a.display_name, ''), '')
+		FROM audit_events ae
+		LEFT JOIN actors a ON a.id = ae.actor_id
+		ORDER BY ae.created_at DESC
 		LIMIT 100
 	`)
 	if err != nil {
@@ -192,13 +199,18 @@ type queryExecutor interface {
 
 func (p *Postgres) GetEgressRequest(ctx context.Context, id string) (domain.EgressRequest, error) {
 	row := p.pool.QueryRow(ctx, `
-		SELECT id, agent_id, user_id, org_id, method, host, port, path, scheme,
-		       status, rule_id, requested_at, decided_at, decided_by, error_message, consumed_at
-		FROM egress_requests
-		WHERE id = $1
+		SELECT er.id, er.agent_id, er.user_id, er.org_id, er.method, er.host, er.port, er.path, er.scheme,
+		       er.status, er.rule_id, er.requested_at, er.decided_at, er.decided_by, er.error_message, er.consumed_at,
+		       COALESCE(NULLIF(u.display_name, ''), ''),
+		       COALESCE(NULLIF(ag.name, ''), NULLIF(aa.display_name, ''), '')
+		FROM egress_requests er
+		LEFT JOIN actors u ON u.id = er.user_id
+		LEFT JOIN agents ag ON ag.id = er.agent_id
+		LEFT JOIN actors aa ON aa.id = ag.actor_id
+		WHERE er.id = $1
 	`, id)
 
-	req, err := scanEgressRequestRow(row)
+	req, err := scanEgressRequestEnrichedRow(row)
 	if err != nil {
 		if isNoRows(err) {
 			return domain.EgressRequest{}, domain.ErrNotFound{Resource: "egress_request", ID: id}
@@ -295,7 +307,7 @@ func (p *Postgres) ApproveRequestWithOrgRule(ctx context.Context, id, decidedBy 
 	}
 
 	var rule domain.PolicyRule
-	rule, err = p.findOrInsertOrgAllowRuleTx(ctx, tx, pending, decidedBy, opts.ExpiresAt)
+	rule, err = p.findOrInsertOrgAllowRuleTx(ctx, tx, pending, decidedBy, opts)
 	if err != nil {
 		return domain.EgressRequest{}, domain.PolicyRule{}, err
 	}
@@ -452,7 +464,8 @@ func enrichRuleAuditMetadata(metadata map[string]any, rule domain.PolicyRule) ma
 	return metadata
 }
 
-func (p *Postgres) findOrInsertOrgAllowRuleTx(ctx context.Context, tx pgx.Tx, pending domain.EgressRequest, decidedBy string, expiresAt *time.Time) (domain.PolicyRule, error) {
+func (p *Postgres) findOrInsertOrgAllowRuleTx(ctx context.Context, tx pgx.Tx, pending domain.EgressRequest, decidedBy string, opts OrgRuleOptions) (domain.PolicyRule, error) {
+	method, pathPrefix := persistentAllowMethod(pending.Method, pending.Path)
 	in := CreatePolicyRuleInput{
 		OrgID:      pending.OrgID,
 		Scope:      domain.RuleScopeOrg,
@@ -460,13 +473,21 @@ func (p *Postgres) findOrInsertOrgAllowRuleTx(ctx context.Context, tx pgx.Tx, pe
 		Effect:     domain.RuleEffectAllow,
 		Host:       pending.Host,
 		Port:       pending.Port,
-		Method:     pending.Method,
-		PathPrefix: pending.Path,
-		ExpiresAt:  expiresAt,
+		Method:     method,
+		PathPrefix: pathPrefix,
+		ExpiresAt:  opts.ExpiresAt,
 		CreatedBy:  decidedBy,
 	}
 	rule, _, err := p.insertPolicyRuleTx(ctx, tx, in)
 	return rule, err
+}
+
+// persistentAllowMethod maps CONNECT remembers to method=* so HTTPS hosts can be allowlisted.
+func persistentAllowMethod(pendingMethod, pendingPath string) (method, pathPrefix string) {
+	if pendingMethod == "CONNECT" {
+		return "*", "/"
+	}
+	return pendingMethod, pendingPath
 }
 
 func (p *Postgres) insertPolicyRuleTx(ctx context.Context, tx pgx.Tx, in CreatePolicyRuleInput) (domain.PolicyRule, bool, error) {
@@ -622,34 +643,10 @@ func nullIfEmpty(value string) any {
 func scanEgressRequests(rows pgxRows) ([]domain.EgressRequest, error) {
 	requests := make([]domain.EgressRequest, 0)
 	for rows.Next() {
-		var req domain.EgressRequest
-		var status string
-		if err := rows.Scan(
-			&req.ID,
-			&req.AgentID,
-			&req.UserID,
-			&req.OrgID,
-			&req.Method,
-			&req.Host,
-			&req.Port,
-			&req.Path,
-			&req.Scheme,
-			&status,
-			&req.RuleID,
-			&req.RequestedAt,
-			&req.DecidedAt,
-			&req.DecidedBy,
-			&req.ErrorMessage,
-			&req.ConsumedAt,
-		); err != nil {
+		req, err := scanEgressRequestEnrichedRow(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan egress request: %w", err)
 		}
-
-		parsed, err := domain.ParseRequestStatus(status)
-		if err != nil {
-			return nil, err
-		}
-		req.Status = parsed
 		requests = append(requests, req)
 	}
 
@@ -662,6 +659,40 @@ func scanEgressRequests(rows pgxRows) ([]domain.EgressRequest, error) {
 
 type pgxRow interface {
 	Scan(dest ...any) error
+}
+
+func scanEgressRequestEnrichedRow(row pgxRow) (domain.EgressRequest, error) {
+	var req domain.EgressRequest
+	var status string
+	if err := row.Scan(
+		&req.ID,
+		&req.AgentID,
+		&req.UserID,
+		&req.OrgID,
+		&req.Method,
+		&req.Host,
+		&req.Port,
+		&req.Path,
+		&req.Scheme,
+		&status,
+		&req.RuleID,
+		&req.RequestedAt,
+		&req.DecidedAt,
+		&req.DecidedBy,
+		&req.ErrorMessage,
+		&req.ConsumedAt,
+		&req.UserDisplayName,
+		&req.AgentDisplayName,
+	); err != nil {
+		return domain.EgressRequest{}, err
+	}
+
+	parsed, err := domain.ParseRequestStatus(status)
+	if err != nil {
+		return domain.EgressRequest{}, err
+	}
+	req.Status = parsed
+	return req, nil
 }
 
 func scanEgressRequestRow(row pgxRow) (domain.EgressRequest, error) {
@@ -725,11 +756,12 @@ func scanPolicyRules(rows pgxRows) ([]domain.PolicyRule, error) {
 
 		parsedScope, err := parseRuleScope(scope)
 		if err != nil {
-			return nil, err
+			// Skip legacy/unsupported scopes so one bad row cannot take down Rules UI.
+			continue
 		}
 		parsedEffect, err := parseRuleEffect(effect)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		rule.Scope = parsedScope
 		rule.Effect = parsedEffect
@@ -756,6 +788,7 @@ func scanAuditEvents(rows pgxRows) ([]domain.AuditEvent, error) {
 		var (
 			event       domain.AuditEvent
 			rawMetadata []byte
+			actorName   string
 		)
 		if err := rows.Scan(
 			&event.ID,
@@ -764,6 +797,7 @@ func scanAuditEvents(rows pgxRows) ([]domain.AuditEvent, error) {
 			&event.ActorID,
 			&rawMetadata,
 			&event.CreatedAt,
+			&actorName,
 		); err != nil {
 			return nil, fmt.Errorf("scan audit event: %w", err)
 		}
@@ -772,6 +806,7 @@ func scanAuditEvents(rows pgxRows) ([]domain.AuditEvent, error) {
 		} else if err := json.Unmarshal(rawMetadata, &event.Metadata); err != nil {
 			return nil, fmt.Errorf("decode audit event metadata: %w", err)
 		}
+		event.ActorName = actorName
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {
