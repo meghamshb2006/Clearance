@@ -157,22 +157,46 @@ func (rememberStore) HasDeniedPattern(context.Context, store.ApprovalMatchInput)
 }
 func (rememberStore) MarkApprovalConsumed(context.Context, string) error { return nil }
 
-func TestApproveRememberRejectsCONNECT(t *testing.T) {
-	svc := service.NewEgress(rememberStore{
-		pending: domain.EgressRequest{ID: "req-connect", Method: "CONNECT", Host: "api.github.com"},
-	}, policy.NewRuleEngine(rememberStore{}))
+func TestApproveRememberAllowsCONNECT(t *testing.T) {
+	st := &connectRememberStore{
+		pending: domain.EgressRequest{
+			ID:     "req-connect",
+			Method: "CONNECT",
+			Host:   "api.github.com",
+			Port:   443,
+			Path:   "/",
+			OrgID:  "org-1",
+			Status: domain.RequestStatusPending,
+		},
+	}
+	svc := service.NewEgress(st, policy.NewRuleEngine(st))
 
-	_, err := svc.Approve(context.Background(), "req-connect", "admin-1", domain.ApproveRequestBody{
+	approved, err := svc.Approve(context.Background(), "req-connect", "admin-1", domain.ApproveRequestBody{
 		Remember: true,
 		Scope:    domain.RuleScopeOrg,
 	})
-	if err == nil {
-		t.Fatal("expected error for remember=true on CONNECT")
+	if err != nil {
+		t.Fatalf("Approve() error = %v (CONNECT remember should create method=* rule)", err)
 	}
-	var blocked domain.ErrRememberCONNECTNotAllowed
-	if !errors.As(err, &blocked) {
-		t.Fatalf("error = %v, want ErrRememberCONNECTNotAllowed", err)
+	if approved.ID != "req-connect" {
+		t.Fatalf("approved ID = %q", approved.ID)
 	}
+}
+
+type connectRememberStore struct {
+	approvalStore
+	pending domain.EgressRequest
+}
+
+func (s *connectRememberStore) GetEgressRequest(_ context.Context, _ string) (domain.EgressRequest, error) {
+	return s.pending, nil
+}
+
+func (s *connectRememberStore) ApproveRequestWithOrgRule(_ context.Context, id, _ string, _ store.OrgRuleOptions, _ store.AuditInput) (domain.EgressRequest, domain.PolicyRule, error) {
+	out := s.pending
+	out.ID = id
+	out.Status = domain.RequestStatusApproved
+	return out, domain.PolicyRule{Method: "*", Host: s.pending.Host, Port: s.pending.Port, PathPrefix: "/"}, nil
 }
 
 func TestApproveRememberRejectsNonOrgScope(t *testing.T) {

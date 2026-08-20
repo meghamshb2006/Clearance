@@ -25,12 +25,8 @@ func (s *EgressService) Approve(ctx context.Context, requestID, adminID string, 
 			return domain.EgressRequest{}, domain.ErrRememberScopeNotSupported{Scope: scope}
 		}
 
-		pending, err := s.store.GetEgressRequest(ctx, requestID)
-		if err != nil {
+		if _, err := s.store.GetEgressRequest(ctx, requestID); err != nil {
 			return domain.EgressRequest{}, err
-		}
-		if pending.Method == "CONNECT" {
-			return domain.EgressRequest{}, domain.ErrRememberCONNECTNotAllowed{Host: pending.Host}
 		}
 		if err := validateExpiresAt(body.ExpiresAt); err != nil {
 			return domain.EgressRequest{}, err
