@@ -65,7 +65,11 @@ type AuditEvent struct {
 	ID              string         `json:"id"`
 	EgressRequestID *string        `json:"egress_request_id,omitempty"`
 	EventType       string         `json:"event_type"`
+	Title           string         `json:"title"`
+	Description     string         `json:"description"`
+	Subject         string         `json:"subject,omitempty"`
 	ActorID         *string        `json:"actor_id,omitempty"`
+	ActorName       string         `json:"actor_name,omitempty"`
 	Metadata        map[string]any `json:"metadata"`
 	CreatedAt       time.Time      `json:"created_at"`
 }

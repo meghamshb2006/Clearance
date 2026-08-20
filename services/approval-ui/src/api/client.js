@@ -106,6 +106,13 @@ export async function denyRequest(id, feedback) {
   })
 }
 
+export async function createRule(body) {
+  return apiFetch('/api/v1/rules', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function revokeRule(id) {
   return apiFetch(`/api/v1/rules/${id}`, { method: 'DELETE' })
 }

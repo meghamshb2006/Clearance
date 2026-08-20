@@ -85,9 +85,11 @@ func (p *Postgres) ListRules(ctx context.Context) ([]domain.PolicyRule, error) {
 
 func (p *Postgres) ListAuditEvents(ctx context.Context) ([]domain.AuditEvent, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, egress_request_id, event_type, actor_id, metadata_json, created_at
-		FROM audit_events
-		ORDER BY created_at DESC
+		SELECT ae.id, ae.egress_request_id, ae.event_type, ae.actor_id, ae.metadata_json, ae.created_at,
+		       COALESCE(NULLIF(a.display_name, ''), '')
+		FROM audit_events ae
+		LEFT JOIN actors a ON a.id = ae.actor_id
+		ORDER BY ae.created_at DESC
 		LIMIT 100
 	`)
 	if err != nil {
@@ -756,6 +758,7 @@ func scanAuditEvents(rows pgxRows) ([]domain.AuditEvent, error) {
 		var (
 			event       domain.AuditEvent
 			rawMetadata []byte
+			actorName   string
 		)
 		if err := rows.Scan(
 			&event.ID,
@@ -764,6 +767,7 @@ func scanAuditEvents(rows pgxRows) ([]domain.AuditEvent, error) {
 			&event.ActorID,
 			&rawMetadata,
 			&event.CreatedAt,
+			&actorName,
 		); err != nil {
 			return nil, fmt.Errorf("scan audit event: %w", err)
 		}
@@ -772,6 +776,7 @@ func scanAuditEvents(rows pgxRows) ([]domain.AuditEvent, error) {
 		} else if err := json.Unmarshal(rawMetadata, &event.Metadata); err != nil {
 			return nil, fmt.Errorf("decode audit event metadata: %w", err)
 		}
+		event.ActorName = actorName
 		events = append(events, event)
 	}
 	if err := rows.Err(); err != nil {
